@@ -29,13 +29,13 @@ initializeDBAndServer();
 //Create User API
 app.post("/register/", async (request, response) => {
   const { username, password, name, gender } = request.body;
-  const hashedPwd = bcrypt.hash(password, 10);
   const checkUserQuery = `SELECT * FROM user WHERE username = '${username}';`;
   const checkUser = await db.get(checkUserQuery);
   if (checkUser !== undefined) {
     response.status(400);
     response.send("User already exists");
   } else {
+    const hashedPwd = await bcrypt.hash(password, 10);
     if (password.length < 6) {
       response.status(400);
       response.send("Password is too short");
@@ -124,7 +124,7 @@ app.get("/user/followers/", tokenAuthenticator, async (request, response) => {
   const { username } = request;
   const getLoggedUserQuery = `SELECT * FROM user WHERE username = '${username}';`;
   const loggedUser = await db.get(getLoggedUserQuery);
-  const getFollowersQuery = `SELECT * FROM user JOIN follower ON user.user_id = follower.follower_user_id WHERE user.user_id = ${loggedUser.user_id};`;
+  const getFollowersQuery = `SELECT * FROM user JOIN follower ON user.user_id = follower.follower_user_id WHERE follower.following_user_id = ${loggedUser.user_id};`;
   let followersDetails = await db.all(getFollowersQuery);
   followersDetails = followersDetails.map((each) => each.follower_user_id);
   const followerNamesQuery = `SELECT name FROM user WHERE user_id IN (${followersDetails});`;
@@ -161,7 +161,7 @@ app.get(
     let tweetIds = await db.all(tweetsOfFollowingUsersQuery);
     tweetIds = tweetIds.map((each) => each.tweet_id);
     const countOfReplyAndLikeQuery = `SELECT tweet.tweet,COUNT(like.like_id) AS likes, COUNT(reply.reply_id) AS replies,tweet.date_time AS dateTime FROM (tweet JOIN like ON tweet.tweet_id = like.tweet_id) AS S JOIN reply ON S.tweet_id = reply.tweet_id WHERE tweet.tweet_id IN (${tweetIds});`;
-    const countOfReplyAndLikes = await db.get(countOfReplyAndLikeQuery);
+    const countOfReplyAndLikes = await db.all(countOfReplyAndLikeQuery);
     response.send(countOfReplyAndLikes);
   }
 );
@@ -199,8 +199,8 @@ app.get(
 app.get("/user/tweets/", tokenAuthenticator, async (request, response) => {
   const { username } = request;
   const getUserIdQuery = `SELECT * FROM user WHERE username = '${username}';`;
-  const loggedUserId = await db.all(getUserIdQuery);
-  const getAllTweetsQuery = `SELECT tweet.tweet,COUNT(like.like_id) AS likes,COUNT(reply.reply_id) AS replies, tweet.date_time AS dateTime FROM (tweet JOIN like ON tweet.tweet_id = like.tweet_id) AS S JOIN reply ON S.tweet_id = reply.tweet_id WHERE tweet.user_id = ${loggedUserId.user_id};`;
+  const loggedUserId = await db.get(getUserIdQuery);
+  const getAllTweetsQuery = `SELECT tweet.tweet AS tweet,COUNT(DISTINCT(like.like_id)) AS likes,COUNT(DISTINCT(reply.reply_id)) AS replies, tweet.date_time AS dateTime FROM (tweet JOIN like ON tweet.tweet_id = like.tweet_id) JOIN reply ON tweet.tweet_id = reply.tweet_id WHERE tweet.user_id = ${loggedUserId.user_id} GROUP BY tweet.tweet_id;`;
   const allTweetsArray = await db.all(getAllTweetsQuery);
   response.send(allTweetsArray);
 });
@@ -227,11 +227,10 @@ app.delete(
     const getUserIdQuery = `SELECT * FROM user WHERE username = '${username}';`;
     const loggedUserId = await db.get(getUserIdQuery);
     const { tweetId } = request.params;
-    const getTweetIdsOfLoggedUserQuery = `SELECT tweet_id FROM tweet WHERE user_id = ${loggedUserId.user_id};`;
-    let tweetIdsArray = await db.all(getTweetIdsOfLoggedUserQuery);
-    tweetIdsArray = tweetIdsArray.map((each) => each.tweet_id);
-    if (tweetIdsArray.includes(tweetId)) {
-      const deleteTweetQuery = `DELETE FROM tweet WHERE tweet_id = ${tweetId};`;
+    const getTweetsOfLoggedUserQuery = `SELECT tweet_id FROM tweet WHERE user_id = ${loggedUserId.user_id} AND tweet_id = ${tweetId};`;
+    const tweetsArray = await db.all(getTweetsOfLoggedUserQuery);
+    if (tweetsArray.length !== 0) {
+      const deleteTweetQuery = `DELETE FROM tweet WHERE user_id = ${loggedUserId.user_id} AND tweet_id = ${tweetId};`;
       await db.run(deleteTweetQuery);
       response.send("Tweet Removed");
     } else {
